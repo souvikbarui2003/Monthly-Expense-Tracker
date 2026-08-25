@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAuth } from "../App";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localGetSavingsGoals, localCreateSavingsGoal, localContributeSavingsGoal, localUpdateSavingsGoal, localDeleteSavingsGoal } from "../lib/localStore";
 import { formatCurrency, formatDate } from "../lib/utils";
 import { Plus, Target, Pause, Play, Trash2, X, Award } from "lucide-react";
 import { toast } from "sonner";
@@ -13,10 +15,10 @@ export default function SavingsPage() {
   const [form, setForm] = useState({ name: "", targetAmount: "", targetDate: "" });
   const [contributeAmount, setContributeAmount] = useState("");
 
-  const goals = useQuery(
-    api.savingsGoals.list,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  const [refreshKey, setRefreshKey] = useState(0);
+  const convexGoals = useQuery(api.savingsGoals.list, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const localGoals = useMemo(() => !USE_CONVEX && user?.userId ? localGetSavingsGoals(user.userId) : null, [user?.userId, refreshKey]);
+  const goals = convexGoals ?? localGoals;
 
   const createGoal = useMutation(api.savingsGoals.create);
   const updateGoal = useMutation(api.savingsGoals.update);
@@ -39,12 +41,12 @@ export default function SavingsPage() {
     }
 
     try {
-      await createGoal({
-        userId: user!.userId as any,
-        name: form.name,
-        targetAmount,
-        targetDate: new Date(form.targetDate).getTime(),
-      });
+      if (USE_CONVEX) {
+        await createGoal({ userId: user!.userId as any, name: form.name, targetAmount, targetDate: new Date(form.targetDate).getTime() });
+      } else {
+        localCreateSavingsGoal({ userId: user!.userId, name: form.name, targetAmount, currentAmount: 0, targetDate: new Date(form.targetDate).getTime(), status: "active" });
+        setRefreshKey((k) => k + 1);
+      }
       setForm({ name: "", targetAmount: "", targetDate: "" });
       setShowModal(false);
       toast.success("Goal created");
@@ -62,11 +64,12 @@ export default function SavingsPage() {
     }
 
     try {
-      await contribute({
-        goalId: showContribute._id,
-        userId: user!.userId as any,
-        amount,
-      });
+      if (USE_CONVEX) {
+        await contribute({ goalId: showContribute._id, userId: user!.userId as any, amount });
+      } else {
+        localContributeSavingsGoal(showContribute._id, user!.userId, amount);
+        setRefreshKey((k) => k + 1);
+      }
       const newTotal = showContribute.currentAmount + amount;
       if (newTotal >= showContribute.targetAmount) {
         toast.success("🎉 Goal completed!");
@@ -82,11 +85,12 @@ export default function SavingsPage() {
 
   const handleTogglePause = async (goal: any) => {
     try {
-      await updateGoal({
-        goalId: goal._id,
-        userId: user!.userId as any,
-        status: goal.status === "active" ? "paused" : "active",
-      });
+      if (USE_CONVEX) {
+        await updateGoal({ goalId: goal._id, userId: user!.userId as any, status: goal.status === "active" ? "paused" : "active" });
+      } else {
+        localUpdateSavingsGoal(goal._id, user!.userId, { status: goal.status === "active" ? "paused" : "active" });
+        setRefreshKey((k) => k + 1);
+      }
     } catch (err: any) {
       toast.error(err.message || "Failed to update");
     }
@@ -94,7 +98,7 @@ export default function SavingsPage() {
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteGoal({ goalId: id as any, userId: user!.userId as any });
+      if (USE_CONVEX) { await deleteGoal({ goalId: id as any, userId: user!.userId as any }); } else { localDeleteSavingsGoal(id, user!.userId); setRefreshKey((k) => k + 1); }
       toast.success("Goal deleted");
     } catch (err: any) {
       toast.error(err.message || "Failed to delete");

@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../App";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localGetDashboardOverview, localGetMonthlyTrend, localGetCategoryBreakdown, localGetDailySpending, localGetRecentTransactions, localGetSavingsGoals } from "../lib/localStore";
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -15,47 +17,38 @@ import { formatCurrency, getCategoryColor } from "../lib/utils";
 import { toast } from "sonner";
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, seedDemoData } = useAuth();
+  const userId = user?.userId;
 
-  // Real Convex queries
-  const overview = useQuery(
-    api.dashboard.getOverview,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  // Convex queries (skip when not connected)
+  const convexOverview = useQuery(api.dashboard.getOverview, USE_CONVEX && userId ? { userId: userId as any } : "skip");
+  const convexMonthlyTrend = useQuery(api.dashboard.getMonthlyTrend, USE_CONVEX && userId ? { userId: userId as any, months: 6 } : "skip");
+  const convexCategoryBreakdown = useQuery(api.dashboard.getCategoryBreakdown, USE_CONVEX && userId ? { userId: userId as any } : "skip");
+  const convexDailySpending = useQuery(api.dashboard.getDailySpending, USE_CONVEX && userId ? { userId: userId as any, days: 30 } : "skip");
+  const convexRecentTransactions = useQuery(api.dashboard.getRecentTransactions, USE_CONVEX && userId ? { userId: userId as any, limit: 5 } : "skip");
+  const convexSavingsGoals = useQuery(api.savingsGoals.list, USE_CONVEX && userId ? { userId: userId as any } : "skip");
 
-  const monthlyTrend = useQuery(
-    api.dashboard.getMonthlyTrend,
-    user?.userId ? { userId: user.userId as any, months: 6 } : "skip"
-  );
+  // Local data (immediately available in local mode)
+  const localOverview = useMemo(() => !USE_CONVEX && userId ? localGetDashboardOverview(userId) : null, [userId]);
+  const localMonthlyTrend = useMemo(() => !USE_CONVEX && userId ? localGetMonthlyTrend(userId, 6) : null, [userId]);
+  const localCategoryBreakdown = useMemo(() => !USE_CONVEX && userId ? localGetCategoryBreakdown(userId) : null, [userId]);
+  const localDailySpending = useMemo(() => !USE_CONVEX && userId ? localGetDailySpending(userId, 30) : null, [userId]);
+  const localRecentTransactions = useMemo(() => !USE_CONVEX && userId ? localGetRecentTransactions(userId, 5) : null, [userId]);
+  const localSavingsGoals = useMemo(() => !USE_CONVEX && userId ? localGetSavingsGoals(userId) : null, [userId]);
 
-  const categoryBreakdown = useQuery(
-    api.dashboard.getCategoryBreakdown,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  // Merge: prefer Convex data, fall back to local
+  const overview = convexOverview ?? localOverview;
+  const monthlyTrend = convexMonthlyTrend ?? localMonthlyTrend;
+  const categoryBreakdown = convexCategoryBreakdown ?? localCategoryBreakdown;
+  const dailySpending = convexDailySpending ?? localDailySpending;
+  const recentTransactions = convexRecentTransactions ?? localRecentTransactions;
+  const savingsGoals = convexSavingsGoals ?? localSavingsGoals;
 
-  const dailySpending = useQuery(
-    api.dashboard.getDailySpending,
-    user?.userId ? { userId: user.userId as any, days: 30 } : "skip"
-  );
+  const isLoading = USE_CONVEX
+    ? convexOverview === undefined
+    : localOverview === null;
 
-  const recentTransactions = useQuery(
-    api.dashboard.getRecentTransactions,
-    user?.userId ? { userId: user.userId as any, limit: 5 } : "skip"
-  );
-
-  const savingsGoals = useQuery(
-    api.savingsGoals.list,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
-
-  const isLoading =
-    overview === undefined ||
-    monthlyTrend === undefined ||
-    categoryBreakdown === undefined;
-
-
-
-  if (isLoading) {
+  if (isLoading || !overview) {
     return (
       <div className="space-y-6">
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -71,10 +64,14 @@ export default function DashboardPage() {
     );
   }
 
-  if (!overview) return null;
-
   const budgetUsed = overview.budgetUtilization;
-  const activeGoals = (savingsGoals || []).filter((g: { status: string }) => g.status === "active");
+  const activeGoals = (savingsGoals || []).filter((g: any) => g.status === "active");
+
+  const handleSeedData = async () => {
+    await seedDemoData();
+    toast.success("Demo data loaded! Refreshing...");
+    window.location.reload();
+  };
 
   return (
     <div className="space-y-6">
@@ -86,13 +83,24 @@ export default function DashboardPage() {
             Welcome back, {user?.name?.split(" ")[0] || "there"}
           </p>
         </div>
-        <Link
-          to="/transactions"
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Add Transaction
-        </Link>
+        <div className="flex gap-2">
+          {overview.allTimeTransactionCount === 0 && (
+            <button
+              onClick={handleSeedData}
+              className="flex items-center gap-1 rounded-lg border px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Load Demo Data
+            </button>
+          )}
+          <Link
+            to="/transactions"
+            className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Add Transaction
+          </Link>
+        </div>
       </div>
 
       {/* Overview cards */}
@@ -185,7 +193,7 @@ export default function DashboardPage() {
               <ResponsiveContainer width="100%" height={200}>
                 <PieChart>
                   <Pie
-                    data={categoryBreakdown.map((c: { name: string; amount: number; color: string }) => ({
+                    data={categoryBreakdown.map((c: any) => ({
                       name: c.name,
                       value: c.amount,
                       color: c.color || getCategoryColor(c.name),
@@ -197,7 +205,7 @@ export default function DashboardPage() {
                     paddingAngle={2}
                     dataKey="value"
                   >
-                    {categoryBreakdown.map((c: { name: string; color: string }, i: number) => (
+                    {categoryBreakdown.map((c: any, i: number) => (
                       <Cell key={i} fill={c.color || getCategoryColor(c.name)} />
                     ))}
                   </Pie>
@@ -205,7 +213,7 @@ export default function DashboardPage() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 mt-2">
-                {categoryBreakdown.slice(0, 5).map((cat: { name: string; amount: number; color: string }) => (
+                {categoryBreakdown.slice(0, 5).map((cat: any) => (
                   <div key={cat.name} className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <div className="h-2 w-2 rounded-full" style={{ backgroundColor: cat.color || getCategoryColor(cat.name) }} />
@@ -231,7 +239,7 @@ export default function DashboardPage() {
           <h3 className="font-semibold mb-4">Daily Spending (Last 30 Days)</h3>
           {dailySpending && dailySpending.length > 0 ? (
             <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={dailySpending.map((d: { date: string; expense: number }) => ({
+              <BarChart data={dailySpending.map((d: any) => ({
                 date: d.date,
                 amount: d.expense,
               }))}>

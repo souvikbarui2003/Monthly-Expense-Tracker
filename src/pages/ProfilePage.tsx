@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../App";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localGetFinancialProfile, localUpsertFinancialProfile } from "../lib/localStore";
 import { User, Briefcase, DollarSign, Target, Save } from "lucide-react";
 import { toast } from "sonner";
 
@@ -13,10 +15,9 @@ export default function ProfilePage() {
   const [savingsTarget, setSavingsTarget] = useState("");
   const [currency, setCurrency] = useState(user?.currency || "INR");
 
-  const profile = useQuery(
-    api.financialProfiles.get,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  const convexProfile = useQuery(api.financialProfiles.get, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const localProfile = useMemo(() => !USE_CONVEX && user?.userId ? localGetFinancialProfile(user.userId) : null, [user?.userId]);
+  const profile = convexProfile ?? localProfile;
 
   const updateProfileMutation = useMutation(api.auth.updateProfile);
   const updateFinancialProfile = useMutation(api.financialProfiles.update);
@@ -33,31 +34,23 @@ export default function ProfilePage() {
   const handleSave = async () => {
     try {
       if (name !== user?.name || currency !== user?.currency) {
-        await updateProfileMutation({
-          userId: user!.userId as any,
-          name: name || undefined,
-          currency: currency || undefined,
-        });
+        if (USE_CONVEX) {
+          await updateProfileMutation({ userId: user!.userId as any, name: name || undefined, currency: currency || undefined });
+        }
         if (name) updateUser({ name, currency });
       }
 
       const income = parseFloat(monthlyIncome) || 0;
       const target = parseFloat(savingsTarget) || 0;
 
-      if (profile) {
-        await updateFinancialProfile({
-          userId: user!.userId as any,
-          occupation: occupation || undefined,
-          monthlyIncome: income || undefined,
-          preferredSavingsTarget: target || undefined,
-        });
-      } else if (income > 0) {
-        await createFinancialProfile({
-          userId: user!.userId as any,
-          monthlyIncome: income,
-          occupation: occupation || "Not specified",
-          preferredSavingsTarget: target,
-        });
+      if (USE_CONVEX) {
+        if (profile) {
+          await updateFinancialProfile({ userId: user!.userId as any, occupation: occupation || undefined, monthlyIncome: income || undefined, preferredSavingsTarget: target || undefined });
+        } else if (income > 0) {
+          await createFinancialProfile({ userId: user!.userId as any, monthlyIncome: income, occupation: occupation || "Not specified", preferredSavingsTarget: target });
+        }
+      } else {
+        localUpsertFinancialProfile(user!.userId, { monthlyIncome: income, occupation: occupation || "Not specified", preferredSavingsTarget: target });
       }
 
       toast.success("Profile updated successfully");

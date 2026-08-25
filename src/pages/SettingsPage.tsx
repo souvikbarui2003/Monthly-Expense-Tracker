@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAuth } from "../App";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localGetTransactions, localGetCategories } from "../lib/localStore";
 import { formatCurrency, generateCSVExport, downloadFile } from "../lib/utils";
 import { Settings, Shield, Download, Bell, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -13,15 +15,12 @@ export default function SettingsPage() {
   const [budgetAlerts, setBudgetAlerts] = useState(true);
   const [anomalyDetection, setAnomalyDetection] = useState(true);
 
-  const transactions = useQuery(
-    api.transactions.list,
-    user?.userId ? { userId: user.userId as any, limit: 1000 } : "skip"
-  );
-
-  const categories = useQuery(
-    api.categories.list,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  const convexTx = useQuery(api.transactions.list, USE_CONVEX && user?.userId ? { userId: user.userId as any, limit: 1000 } : "skip");
+  const convexCats = useQuery(api.categories.list, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const localTx = useMemo(() => !USE_CONVEX && user?.userId ? localGetTransactions(user.userId, { limit: 1000 }) : null, [user?.userId]);
+  const localCats = useMemo(() => !USE_CONVEX && user?.userId ? localGetCategories(user.userId) : null, [user?.userId]);
+  const transactions = convexTx ?? localTx;
+  const categories = convexCats ?? localCats;
 
   const getCategoryName = (catId: string) => {
     return categories?.find((c: any) => c._id === catId)?.name || "Unknown";

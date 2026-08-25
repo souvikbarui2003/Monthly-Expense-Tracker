@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../App";
 import { useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localUpsertFinancialProfile, localCompleteOnboarding } from "../lib/localStore";
 import { toast } from "sonner";
 import { ArrowRight, ArrowLeft, Wallet, CheckCircle2 } from "lucide-react";
 
@@ -21,8 +23,8 @@ export default function OnboardingPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const createProfile = useMutation(api.financialProfiles.create);
-  const completeOnboarding = useMutation(api.auth.completeOnboarding);
+  const convexCreateProfile = useMutation(api.financialProfiles.create);
+  const convexCompleteOnboarding = useMutation(api.auth.completeOnboarding);
 
   const defaultCategories = [
     "Food", "Transport", "Shopping", "Entertainment", "Bills & Utilities",
@@ -38,21 +40,34 @@ export default function OnboardingPage() {
   const handleComplete = async () => {
     if (!user) return;
     try {
-      // Save financial profile to Convex
       const income = parseFloat(monthlyIncome) || 0;
       const target = parseFloat(savingsTarget) || 0;
-      if (income > 0) {
-        await createProfile({
-          userId: user.userId as any,
-          monthlyIncome: income,
-          occupation: occupation || "Not specified",
-          studentStatus: studentStatus || undefined,
-          institution: institution || undefined,
-          preferredSavingsTarget: target,
-        });
+
+      if (USE_CONVEX) {
+        if (income > 0) {
+          await convexCreateProfile({
+            userId: user.userId as any,
+            monthlyIncome: income,
+            occupation: occupation || "Not specified",
+            studentStatus: studentStatus || undefined,
+            institution: institution || undefined,
+            preferredSavingsTarget: target,
+          });
+        }
+        await convexCompleteOnboarding({ userId: user.userId as any });
+      } else {
+        if (income > 0) {
+          localUpsertFinancialProfile(user.userId, {
+            monthlyIncome: income,
+            occupation: occupation || "Not specified",
+            studentStatus: studentStatus || undefined,
+            institution: institution || undefined,
+            preferredSavingsTarget: target,
+          });
+        }
+        localCompleteOnboarding(user.userId);
       }
-      // Mark onboarding complete
-      await completeOnboarding({ userId: user.userId as any });
+
       toast.success("Profile setup complete! Welcome to FinTrack AI.");
       navigate("/dashboard");
     } catch (err: unknown) {
@@ -71,19 +86,13 @@ export default function OnboardingPage() {
               <div key={s} className="flex items-center">
                 <div
                   className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold ${
-                    i <= step
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
+                    i <= step ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                   }`}
                 >
                   {i < step ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
                 </div>
                 {i < steps.length - 1 && (
-                  <div
-                    className={`ml-2 h-0.5 w-8 md:w-16 ${
-                      i < step ? "bg-primary" : "bg-muted"
-                    }`}
-                  />
+                  <div className={`ml-2 h-0.5 w-8 md:w-16 ${i < step ? "bg-primary" : "bg-muted"}`} />
                 )}
               </div>
             ))}
@@ -91,7 +100,6 @@ export default function OnboardingPage() {
           <p className="text-xs text-muted-foreground">{steps[step]}</p>
         </div>
 
-        {/* Step content */}
         <div className="rounded-xl border bg-card p-6 shadow-sm">
           {step === 0 && (
             <div className="text-center">
@@ -102,37 +110,21 @@ export default function OnboardingPage() {
               <p className="mt-2 text-muted-foreground">
                 Let&apos;s set up your financial profile so you can start tracking your money smarter.
               </p>
-              <p className="mt-4 text-sm text-muted-foreground">
-                This will only take a minute.
-              </p>
             </div>
           )}
 
           {step === 1 && (
             <div className="space-y-4">
               <h2 className="text-xl font-bold">Your Profile</h2>
-              <p className="text-sm text-muted-foreground">
-                Help us personalize your experience.
-              </p>
               <div>
                 <label className="text-sm font-medium">Occupation</label>
-                <input
-                  type="text"
-                  value={occupation}
-                  onChange={(e) => setOccupation(e.target.value)}
-                  placeholder="e.g., Software Engineer, Student"
-                  className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
+                <input type="text" value={occupation} onChange={(e) => setOccupation(e.target.value)} placeholder="e.g., Software Engineer, Student" className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
               </div>
               {user?.userType === "student" && (
                 <>
                   <div>
                     <label className="text-sm font-medium">Student Status</label>
-                    <select
-                      value={studentStatus}
-                      onChange={(e) => setStudentStatus(e.target.value)}
-                      className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    >
+                    <select value={studentStatus} onChange={(e) => setStudentStatus(e.target.value)} className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50">
                       <option value="">Select...</option>
                       <option value="day_scholar">Day Scholar</option>
                       <option value="hostel">Hostel Student</option>
@@ -142,13 +134,7 @@ export default function OnboardingPage() {
                   </div>
                   <div>
                     <label className="text-sm font-medium">Institution</label>
-                    <input
-                      type="text"
-                      value={institution}
-                      onChange={(e) => setInstitution(e.target.value)}
-                      placeholder="College/University name"
-                      className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    />
+                    <input type="text" value={institution} onChange={(e) => setInstitution(e.target.value)} placeholder="College/University name" className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" />
                   </div>
                 </>
               )}
@@ -158,30 +144,13 @@ export default function OnboardingPage() {
           {step === 2 && (
             <div className="space-y-4">
               <h2 className="text-xl font-bold">Income & Savings</h2>
-              <p className="text-sm text-muted-foreground">
-                Set your monthly income and savings target.
-              </p>
               <div>
                 <label className="text-sm font-medium">Monthly Income (₹)</label>
-                <input
-                  type="number"
-                  value={monthlyIncome}
-                  onChange={(e) => setMonthlyIncome(e.target.value)}
-                  placeholder="e.g., 45000"
-                  className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  min="0"
-                />
+                <input type="number" value={monthlyIncome} onChange={(e) => setMonthlyIncome(e.target.value)} placeholder="e.g., 45000" className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" min="0" />
               </div>
               <div>
                 <label className="text-sm font-medium">Monthly Savings Target (₹)</label>
-                <input
-                  type="number"
-                  value={savingsTarget}
-                  onChange={(e) => setSavingsTarget(e.target.value)}
-                  placeholder="e.g., 10000"
-                  className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  min="0"
-                />
+                <input type="number" value={savingsTarget} onChange={(e) => setSavingsTarget(e.target.value)} placeholder="e.g., 10000" className="mt-1 flex h-10 w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50" min="0" />
               </div>
             </div>
           )}
@@ -189,55 +158,24 @@ export default function OnboardingPage() {
           {step === 3 && (
             <div className="space-y-4">
               <h2 className="text-xl font-bold">Your Categories</h2>
-              <p className="text-sm text-muted-foreground">
-                Select the expense categories that matter to you.
-              </p>
               <div className="flex flex-wrap gap-2">
                 {defaultCategories.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => toggleCategory(cat)}
-                    className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
-                      selectedCategories.includes(cat)
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "hover:bg-muted"
-                    }`}
-                  >
+                  <button key={cat} onClick={() => toggleCategory(cat)} className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${selectedCategories.includes(cat) ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted"}`}>
                     {cat}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground">
-                You can add more categories later.
-              </p>
             </div>
           )}
 
-          {/* Navigation */}
           <div className="mt-6 flex justify-between">
             {step > 0 ? (
-              <button
-                onClick={() => setStep(step - 1)}
-                className="flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted transition-colors"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Back
+              <button onClick={() => setStep(step - 1)} className="flex items-center gap-1 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted transition-colors">
+                <ArrowLeft className="h-4 w-4" />Back
               </button>
-            ) : (
-              <div />
-            )}
-            <button
-              onClick={() => {
-                if (step === steps.length - 1) {
-                  handleComplete();
-                } else {
-                  setStep(step + 1);
-                }
-              }}
-              className="flex items-center gap-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-            >
-              {step === steps.length - 1 ? "Get Started" : "Continue"}
-              <ArrowRight className="h-4 w-4" />
+            ) : <div />}
+            <button onClick={() => step === steps.length - 1 ? handleComplete() : setStep(step + 1)} className="flex items-center gap-1 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
+              {step === steps.length - 1 ? "Get Started" : "Continue"}<ArrowRight className="h-4 w-4" />
             </button>
           </div>
         </div>

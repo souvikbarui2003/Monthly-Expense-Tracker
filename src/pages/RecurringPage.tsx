@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAuth } from "../App";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localGetRecurring, localGetSubscriptions, localCreateRecurring, localDeleteRecurring } from "../lib/localStore";
 import { formatCurrency, formatDate } from "../lib/utils";
 import { Plus, RefreshCw, Trash2, Edit3, X, CreditCard, Pause, Play } from "lucide-react";
 import { toast } from "sonner";
@@ -16,15 +18,12 @@ export default function RecurringPage() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [form, setForm] = useState({ name: "", amount: "", frequency: "monthly", category: "Subscriptions" });
 
-  const items = useQuery(
-    api.recurringTransactions.list,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
-
-  const subscriptions = useQuery(
-    api.subscriptions.list,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  const convexItems = useQuery(api.recurringTransactions.list, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const convexSubs = useQuery(api.subscriptions.list, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const localItems = useMemo(() => !USE_CONVEX && user?.userId ? localGetRecurring(user.userId) : null, [user?.userId]);
+  const localSubsData = useMemo(() => !USE_CONVEX && user?.userId ? localGetSubscriptions(user.userId) : null, [user?.userId]);
+  const items = convexItems ?? localItems;
+  const subscriptions = convexSubs ?? localSubsData;
 
   const monthlyTotalRecurring = useQuery(
     api.recurringTransactions.getMonthlyTotal,

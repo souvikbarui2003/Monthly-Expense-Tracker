@@ -1,8 +1,17 @@
-import { useState, useEffect, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, createContext, useContext, useMemo } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
 import { Toaster } from "sonner";
+import { USE_CONVEX } from "./lib/config";
+import {
+  localRegister,
+  localLogin,
+  localLogout,
+  localUpdateProfile,
+  localSeedDemoData,
+} from "./lib/localStore";
+
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
 import OnboardingPage from "./pages/OnboardingPage";
@@ -17,6 +26,14 @@ import ProfilePage from "./pages/ProfilePage";
 import SettingsPage from "./pages/SettingsPage";
 import Sidebar from "./components/Sidebar";
 import MobileNav from "./components/MobileNav";
+
+// ── Create Convex client (real or dummy) ────────────────────────────────────
+
+const convexClient = new ConvexReactClient(
+  USE_CONVEX ? (import.meta.env.VITE_CONVEX_URL as string) : "http://localhost:0"
+);
+
+// ── Types ──────────────────────────────────────────────────────────────────
 
 interface User {
   userId: string;
@@ -59,54 +76,62 @@ export const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
+// ── Auth Provider ──────────────────────────────────────────────────────────
+
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Convex hooks (always called — "skip" prevents execution in local mode)
   const loginMutation = useMutation(api.auth.login);
   const registerMutation = useMutation(api.auth.register);
   const getCurrentUser = useQuery(
     api.auth.getCurrentUser,
-    user?.userId ? { userId: user.userId as any } : "skip"
+    USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip"
   );
-  const completeOnboardingMutation = useMutation(api.auth.completeOnboarding);
   const seedMutation = useMutation(api.seed.seedDemoData);
 
   // Load session from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem("fintrack_user");
+    const storageKey = USE_CONVEX ? "fintrack_user" : "fintrack_currentUser";
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed.userId) {
-          setUser(parsed);
+        const uid = parsed.userId || parsed.id;
+        if (uid) {
+          setUser({
+            userId: uid,
+            name: parsed.name,
+            email: parsed.email,
+            userType: parsed.userType,
+            currency: parsed.currency || "INR",
+            timezone: parsed.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+            onboardingCompleted: parsed.onboardingCompleted,
+          });
         } else {
-          localStorage.removeItem("fintrack_user");
+          localStorage.removeItem(storageKey);
         }
       } catch {
-        localStorage.removeItem("fintrack_user");
+        localStorage.removeItem(storageKey);
       }
     }
     setLoading(false);
   }, []);
 
-  // Sync user data from Convex when available
+  // Sync user data from Convex (only in Convex mode)
   useEffect(() => {
-    if (getCurrentUser === undefined) return; // Still loading, skip
+    if (!USE_CONVEX || getCurrentUser === undefined) return;
     if (!getCurrentUser && user) {
-      // User was deleted from DB — clear session
       setUser(null);
       localStorage.removeItem("fintrack_user");
       return;
     }
     if (getCurrentUser && user) {
-      // Only update if data actually changed to prevent unnecessary renders
       if (
         getCurrentUser.name !== user.name ||
         getCurrentUser.email !== user.email ||
         getCurrentUser.userType !== user.userType ||
-        getCurrentUser.currency !== user.currency ||
-        getCurrentUser.timezone !== user.timezone ||
         getCurrentUser.onboardingCompleted !== user.onboardingCompleted
       ) {
         const updated: User = {
@@ -126,67 +151,117 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
-      const result = await loginMutation({ email, password });
-      const userData: User = {
-        userId: result.userId,
-        name: result.name,
-        email: result.email,
-        userType: result.userType,
-        currency: "INR",
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        onboardingCompleted: result.onboardingCompleted,
-      };
-      setUser(userData);
-      localStorage.setItem("fintrack_user", JSON.stringify(userData));
+      if (USE_CONVEX) {
+        const result = await loginMutation({ email, password });
+        const userData: User = {
+          userId: result.userId,
+          name: result.name,
+          email: result.email,
+          userType: result.userType,
+          currency: "INR",
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          onboardingCompleted: result.onboardingCompleted,
+        };
+        setUser(userData);
+        localStorage.setItem("fintrack_user", JSON.stringify(userData));
+      } else {
+        const result = await localLogin(email, password);
+        setUser({
+          userId: result.id,
+          name: result.name,
+          email: result.email,
+          userType: result.userType,
+          currency: result.currency,
+          timezone: result.timezone,
+          onboardingCompleted: result.onboardingCompleted,
+        });
+      }
     },
-    [loginMutation]
+    [loginMutation],
   );
 
   const register = useCallback(
     async (data: RegisterData) => {
-      const result = await registerMutation({
-        email: data.email,
-        password: data.password,
-        name: data.name,
-        userType: data.userType,
-        currency: data.currency,
-        timezone: data.timezone,
-      });
-      const userData: User = {
-        userId: result.userId,
-        name: data.name,
-        email: data.email,
-        userType: data.userType,
-        currency: data.currency,
-        timezone: data.timezone,
-        onboardingCompleted: false,
-      };
-      setUser(userData);
-      localStorage.setItem("fintrack_user", JSON.stringify(userData));
+      if (USE_CONVEX) {
+        const result = await registerMutation({
+          email: data.email,
+          password: data.password,
+          name: data.name,
+          userType: data.userType,
+          currency: data.currency,
+          timezone: data.timezone,
+        });
+        const userData: User = {
+          userId: result.userId,
+          name: data.name,
+          email: data.email,
+          userType: data.userType,
+          currency: data.currency,
+          timezone: data.timezone,
+          onboardingCompleted: false,
+        };
+        setUser(userData);
+        localStorage.setItem("fintrack_user", JSON.stringify(userData));
+      } else {
+        const result = await localRegister(
+          data.email,
+          data.password,
+          data.name,
+          data.userType,
+          data.currency,
+          data.timezone,
+        );
+        setUser({
+          userId: result.id,
+          name: data.name,
+          email: data.email,
+          userType: data.userType,
+          currency: data.currency,
+          timezone: data.timezone,
+          onboardingCompleted: false,
+        });
+      }
     },
-    [registerMutation]
+    [registerMutation],
   );
 
   const logout = useCallback(() => {
     setUser(null);
-    localStorage.removeItem("fintrack_user");
+    if (USE_CONVEX) {
+      localStorage.removeItem("fintrack_user");
+    } else {
+      localLogout();
+    }
   }, []);
 
   const updateUser = useCallback((updates: Partial<User>) => {
     setUser((prev) => {
       if (!prev) return prev;
       const updated = { ...prev, ...updates };
-      localStorage.setItem("fintrack_user", JSON.stringify(updated));
+      if (USE_CONVEX) {
+        localStorage.setItem("fintrack_user", JSON.stringify(updated));
+      } else {
+        localUpdateProfile(prev.userId, {
+          name: updated.name,
+          currency: updated.currency,
+          timezone: updated.timezone,
+          userType: updated.userType as "student" | "professional" | "general",
+        });
+      }
       return updated;
     });
   }, []);
 
   const seedDemoData = useCallback(async () => {
     if (!user?.userId) return;
-    try {
-      await seedMutation({ userId: user.userId as any });
-    } catch (err) {
-      console.warn("Seed data error:", err);
+    if (USE_CONVEX) {
+      try {
+        await seedMutation({ userId: user.userId as any });
+      } catch (err) {
+        console.warn("Seed data error:", err);
+      }
+    } else {
+      localSeedDemoData(user.userId);
     }
   }, [user?.userId, seedMutation]);
 
@@ -196,6 +271,8 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     </AuthContext.Provider>
   );
 }
+
+// ── Route Guards ───────────────────────────────────────────────────────────
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -276,13 +353,17 @@ function AppRoutes() {
   );
 }
 
+// ── App Root ───────────────────────────────────────────────────────────────
+
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-        <Toaster position="top-right" richColors closeButton />
-      </AuthProvider>
+      <ConvexProvider client={convexClient}>
+        <AuthProvider>
+          <AppRoutes />
+          <Toaster position="top-right" richColors closeButton />
+        </AuthProvider>
+      </ConvexProvider>
     </BrowserRouter>
   );
 }

@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useAuth } from "../App";
 import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localGetMonthlyTrend, localGetCategoryBreakdown, localGetDailySpending } from "../lib/localStore";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -15,22 +17,19 @@ export default function AnalyticsPage() {
   const { user } = useAuth();
   const [period] = useState("6m");
 
-  const monthlyTrend = useQuery(
-    api.dashboard.getMonthlyTrend,
-    user?.userId ? { userId: user.userId as any, months: 6 } : "skip"
-  );
+  const convexMonthly = useQuery(api.dashboard.getMonthlyTrend, USE_CONVEX && user?.userId ? { userId: user.userId as any, months: 6 } : "skip");
+  const convexCat = useQuery(api.dashboard.getCategoryBreakdown, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const convexDaily = useQuery(api.dashboard.getDailySpending, USE_CONVEX && user?.userId ? { userId: user.userId as any, days: 30 } : "skip");
 
-  const categoryBreakdown = useQuery(
-    api.dashboard.getCategoryBreakdown,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  const localMonthly = useMemo(() => !USE_CONVEX && user?.userId ? localGetMonthlyTrend(user.userId, 6) : null, [user?.userId]);
+  const localCat = useMemo(() => !USE_CONVEX && user?.userId ? localGetCategoryBreakdown(user.userId) : null, [user?.userId]);
+  const localDaily = useMemo(() => !USE_CONVEX && user?.userId ? localGetDailySpending(user.userId, 30) : null, [user?.userId]);
 
-  const dailySpending = useQuery(
-    api.dashboard.getDailySpending,
-    user?.userId ? { userId: user.userId as any, days: 30 } : "skip"
-  );
+  const monthlyTrend = convexMonthly ?? localMonthly;
+  const categoryBreakdown = convexCat ?? localCat;
+  const dailySpending = convexDaily ?? localDaily;
 
-  const isLoading = monthlyTrend === undefined || categoryBreakdown === undefined;
+  const isLoading = USE_CONVEX ? (monthlyTrend === undefined) : (monthlyTrend === null);
 
   if (isLoading) {
     return (

@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../App";
-import { useQuery, useMutation, useAction } from "convex/react";
+import { useQuery, useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { USE_CONVEX } from "../lib/config";
+import { localGetDashboardOverview, localGetMonthlyTrend, localGetBudgets } from "../lib/localStore";
 import { formatCurrency } from "../lib/utils";
 import {
   Brain, TrendingUp, TrendingDown, AlertTriangle, CheckCircle2,
@@ -16,20 +18,17 @@ export default function InsightsPage() {
   const [anomalies, setAnomalies] = useState<any>(null);
   const [forecastResult, setForecastResult] = useState<any>(null);
 
-  const overview = useQuery(
-    api.dashboard.getOverview,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  const convexOverview = useQuery(api.dashboard.getOverview, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const convexBudgets = useQuery(api.budgets.list, USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip");
+  const convexTrend = useQuery(api.dashboard.getMonthlyTrend, USE_CONVEX && user?.userId ? { userId: user.userId as any, months: 3 } : "skip");
 
-  const budgets = useQuery(
-    api.budgets.list,
-    user?.userId ? { userId: user.userId as any } : "skip"
-  );
+  const localOverview = useMemo(() => !USE_CONVEX && user?.userId ? localGetDashboardOverview(user.userId) : null, [user?.userId]);
+  const localBudgets = useMemo(() => !USE_CONVEX && user?.userId ? localGetBudgets(user.userId) : null, [user?.userId]);
+  const localTrend = useMemo(() => !USE_CONVEX && user?.userId ? localGetMonthlyTrend(user.userId, 3) : null, [user?.userId]);
 
-  const monthlyTrend = useQuery(
-    api.dashboard.getMonthlyTrend,
-    user?.userId ? { userId: user.userId as any, months: 3 } : "skip"
-  );
+  const overview = convexOverview ?? localOverview;
+  const budgets = convexBudgets ?? localBudgets;
+  const monthlyTrend = convexTrend ?? localTrend;
 
   const modelStatus = useQuery(api.mlInference.getModelStatus, {});
 
@@ -42,25 +41,17 @@ export default function InsightsPage() {
   const detectAnomaliesAction = useAction(api.mlInference.detectAnomalies);
   const forecastAction = useAction(api.mlInference.forecast);
 
-  // Generate insights on mount
+  // Generate insights on mount (only in Convex mode)
   useEffect(() => {
-    if (!user?.userId) return;
-
-    // Auto-categorize a sample transaction
-    categorizeAction({ description: "Swiggy dinner", amount: 380 })
-      .then(setCategorizeResult)
-      .catch(() => {});
-
-    // Detect anomalies
-    detectAnomaliesAction({ userId: user.userId as any })
-      .then(setAnomalies)
-      .catch(() => {});
-
-    // Get forecast
-    forecastAction({ userId: user.userId as any, monthsAhead: 1 })
-      .then(setForecastResult)
-      .catch(() => {});
-  }, [user?.userId]);
+    if (!user?.userId || !USE_CONVEX) {
+      // In local mode, set static categorization demo
+      setCategorizeResult({ category: "Food", subcategory: "Food Delivery", confidence: 0.94, model_version: "keyword-based-v1" });
+      return;
+    }
+    categorizeAction({ description: "Swiggy dinner", amount: 380 }).then(setCategorizeResult).catch(() => {});
+    detectAnomaliesAction({ userId: user.userId as any }).then(setAnomalies).catch(() => {});
+    forecastAction({ userId: user.userId as any, monthsAhead: 1 }).then(setForecastResult).catch(() => {});
+  }, [user?.userId, USE_CONVEX]);
 
   // Build insights from real data
   const computedInsights: Array<{
