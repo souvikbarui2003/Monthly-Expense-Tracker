@@ -249,6 +249,11 @@ export default function LandingPage() {
               <Wallet className="h-5 w-5 text-primary" />
               <span className="font-semibold">FinTrack AI</span>
             </div>
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <Link to="/terms" className="hover:text-foreground transition-colors">Terms of Service</Link>
+              <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</Link>
+              <Link to="/guidelines" className="hover:text-foreground transition-colors">Guidelines</Link>
+            </div>
             <p className="text-sm text-muted-foreground">
               © 2026 FinTrack AI. Built for educational and personal finance management purposes.
             </p>

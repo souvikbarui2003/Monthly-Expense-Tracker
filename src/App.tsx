@@ -14,6 +14,9 @@ import {
 
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
+import TermsPage from "./pages/TermsPage";
+import PrivacyPage from "./pages/PrivacyPage";
+import GuidelinesPage from "./pages/GuidelinesPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import DashboardPage from "./pages/DashboardPage";
 import TransactionsPage from "./pages/TransactionsPage";
@@ -333,6 +336,9 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={user ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
       <Route path="/auth" element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/guidelines" element={<GuidelinesPage />} />
       <Route
         path="/onboarding"
         element={
