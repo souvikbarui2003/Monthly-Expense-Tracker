@@ -1,21 +1,23 @@
-import { useState, useEffect, useCallback, createContext, useContext, useMemo } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  createContext,
+  useContext,
+  Component,
+  type ReactNode,
+} from "react";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex/react";
 import { api } from "./convex/_generated/api";
 import { Toaster } from "sonner";
 import { USE_CONVEX } from "./lib/config";
-
-// Create Convex client — use real URL when available, dummy when not
-// The dummy client satisfies useQuery/useMutation hooks but queries return undefined
-let convexClient: ConvexReactClient;
-try {
-  convexClient = USE_CONVEX
-    ? new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string)
-    : new ConvexReactClient("https://dummy.convex.cloud");
-} catch {
-  // Fallback if constructor throws (shouldn't normally happen)
-  convexClient = new ConvexReactClient("https://dummy.convex.cloud");
-}
 import {
   localRegister,
   localLogin,
@@ -41,8 +43,6 @@ import ProfilePage from "./pages/ProfilePage";
 import SettingsPage from "./pages/SettingsPage";
 import Sidebar from "./components/Sidebar";
 import MobileNav from "./components/MobileNav";
-
-
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -87,18 +87,80 @@ export const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
+// ── Error Boundary ─────────────────────────────────────────────────────────
+
+interface EBState {
+  hasError: boolean;
+}
+
+class ErrorBoundary extends Component<
+  { children: ReactNode; fallback?: ReactNode },
+  EBState
+> {
+  state: EBState = { hasError: false };
+
+  static getDerivedStateFromError(): EBState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("FinTrack AI runtime error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        this.props.fallback ?? (
+          <div className="flex h-screen items-center justify-center bg-background p-8">
+            <div className="text-center">
+              <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
+              <p className="text-sm text-muted-foreground mb-4">
+                The application encountered an error. Please refresh the page.
+              </p>
+              <button
+                onClick={() => window.location.reload()}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Refresh Page
+              </button>
+            </div>
+          </div>
+        )
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ── Convex client (safe initialization) ────────────────────────────────────
+
+// Pages import useQuery/useMutation from convex/react and always call them
+// (with "skip" when in local mode), so ConvexProvider must always be in the tree.
+// We use a placeholder URL for local mode — no actual connection is made since
+// all queries use the "skip" parameter.
+let convexClient: ConvexReactClient;
+try {
+  const url = USE_CONVEX
+    ? (import.meta.env.VITE_CONVEX_URL as string)
+    : "https://placeholder.convex.cloud";
+  convexClient = new ConvexReactClient(url);
+} catch {
+  convexClient = new ConvexReactClient("https://placeholder.convex.cloud");
+}
+
 // ── Auth Provider ──────────────────────────────────────────────────────────
 
 function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Convex hooks (always called — "skip" prevents execution in local mode)
+  // Convex hooks are always called (rules of hooks).
+  // In local mode, all queries use "skip" so no network requests are made.
   const loginMutation = useMutation(api.auth.login);
   const registerMutation = useMutation(api.auth.register);
   const getCurrentUser = useQuery(
     api.auth.getCurrentUser,
-    USE_CONVEX && user?.userId ? { userId: user.userId as any } : "skip"
+    USE_CONVEX && user?.userId ? { userId: user.userId as never } : "skip",
   );
   const seedMutation = useMutation(api.seed.seedDemoData);
 
@@ -117,7 +179,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
             email: parsed.email,
             userType: parsed.userType,
             currency: parsed.currency || "INR",
-            timezone: parsed.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+            timezone:
+              parsed.timezone ||
+              Intl.DateTimeFormat().resolvedOptions().timeZone,
             onboardingCompleted: parsed.onboardingCompleted,
           });
         } else {
@@ -267,7 +331,7 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user?.userId) return;
     if (USE_CONVEX) {
       try {
-        await seedMutation({ userId: user.userId as any });
+        await seedMutation({ userId: user.userId as never });
       } catch (err) {
         console.warn("Seed data error:", err);
       }
@@ -277,7 +341,17 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.userId, seedMutation]);
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, updateUser, loading, seedDemoData }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        register,
+        logout,
+        updateUser,
+        loading,
+        seedDemoData,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -342,8 +416,14 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path="/" element={user ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
-      <Route path="/auth" element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />} />
+      <Route
+        path="/"
+        element={user ? <Navigate to="/dashboard" replace /> : <LandingPage />}
+      />
+      <Route
+        path="/auth"
+        element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />}
+      />
       <Route path="/terms" element={<TermsPage />} />
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route path="/guidelines" element={<GuidelinesPage />} />
@@ -372,12 +452,14 @@ function AppRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
-      <ConvexProvider client={convexClient}>
-        <AuthProvider>
-          <AppRoutes />
-          <Toaster position="top-right" richColors closeButton />
-        </AuthProvider>
-      </ConvexProvider>
+      <ErrorBoundary>
+        <ConvexProvider client={convexClient}>
+          <AuthProvider>
+            <AppRoutes />
+            <Toaster position="top-right" richColors closeButton />
+          </AuthProvider>
+        </ConvexProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }
