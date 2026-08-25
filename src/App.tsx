@@ -4,6 +4,18 @@ import { ConvexProvider, ConvexReactClient, useMutation, useQuery } from "convex
 import { api } from "./convex/_generated/api";
 import { Toaster } from "sonner";
 import { USE_CONVEX } from "./lib/config";
+
+// Create Convex client — use real URL when available, dummy when not
+// The dummy client satisfies useQuery/useMutation hooks but queries return undefined
+let convexClient: ConvexReactClient;
+try {
+  convexClient = USE_CONVEX
+    ? new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string)
+    : new ConvexReactClient("https://dummy.convex.cloud");
+} catch {
+  // Fallback if constructor throws (shouldn't normally happen)
+  convexClient = new ConvexReactClient("https://dummy.convex.cloud");
+}
 import {
   localRegister,
   localLogin,
@@ -30,11 +42,7 @@ import SettingsPage from "./pages/SettingsPage";
 import Sidebar from "./components/Sidebar";
 import MobileNav from "./components/MobileNav";
 
-// ── Create Convex client (real or dummy) ────────────────────────────────────
 
-const convexClient = new ConvexReactClient(
-  USE_CONVEX ? (import.meta.env.VITE_CONVEX_URL as string) : "http://localhost:0"
-);
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
